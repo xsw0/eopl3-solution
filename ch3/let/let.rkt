@@ -2,6 +2,14 @@
 
 (require "parse.rkt")
 
+(define (foldl proc init lst)
+  (if (null? lst)
+      init
+      (foldl proc (proc (car lst) init) (cdr lst))))
+
+(define (foldr proc init lst)
+  (foldl proc init (reverse lst)))
+
 (define list-of
   (lambda (pred)
     (lambda (val)
@@ -91,7 +99,9 @@
    (exp1 expression?))
   (null?-exp
    (exp1 expression?))
-  (emptylist-exp))
+  (emptylist-exp)
+  (list-exp
+   (exps (list-of expression?))))
 
 ; init-env : () → Env
 ; usage: (init-env) = [i=⌈1⌉,v=⌈5⌉,x=⌈10⌉]
@@ -241,4 +251,8 @@
                      (emptylist-val () (bool-val #t))
                      (else (bool-val #f)))))
       (emptylist-exp ()
-                     (emptylist-val)))))
+                     (emptylist-val))
+      (list-exp (exps)
+                (foldr (lambda (exp exps)
+                         (pair-val (value-of exp) exps))
+                       (emptylist-val) exps)))))
