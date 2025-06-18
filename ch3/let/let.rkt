@@ -94,8 +94,7 @@
   (var-exp
    (var identifier?))
   (let-exp
-   (var identifier?)
-   (exp1 expression?)
+   (bindings (list-of (pair-of identifier? expression?)))
    (body expression?))
   (minus-exp
    (exp1 expression?))
@@ -247,10 +246,17 @@
                 (if (expval->bool val1)
                     (value-of exp2 env)
                     (value-of exp3 env))))
-      (let-exp (var exp1 body)
-               (let ((val1 (value-of exp1 env)))
+      (let-exp (bindings body)
+               (let ((var-vals (map (lambda (var-val)
+                                      (cons (car var-val)
+                                            (value-of (cdr var-val)
+                                                      env)))
+                                    (bindings))))
                  (value-of body
-                           (extend-env var val1 env))))
+                           (foldl (lambda (ext env)
+                                    (extend-env (car ext) (cdr ext) env))
+                                  env
+                                  var-vals))))
       (minus-exp (exp1)
                  (let ((val1 (value-of exp1 env)))
                    (let ((num1 (expval->num val1)))
