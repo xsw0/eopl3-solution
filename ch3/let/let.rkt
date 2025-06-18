@@ -96,6 +96,13 @@
   (let-exp
    (bindings (list-of (pair-of identifier? expression?)))
    (body expression?))
+  (let*-exp
+   (bindings (list-of (pair-of identifier? expression?)))
+   (body expression?))
+  (unpack-exp
+   (identifiers (list-of identifier?))
+   (lst expression?)
+   (body expression?))
   (minus-exp
    (exp1 expression?))
   (equal?-exp
@@ -143,6 +150,23 @@
    (val1 expval?)
    (val2 expval?))
   (emptylist-val))
+
+(define (list-val-empty? list-val)
+  (cases expval list-val
+    (emptylist-val () #t)
+    (else #f)))
+
+(define (list-val? exp-val)
+  (cases expval exp-val
+    (emptylist-val () #t)
+    (pair-val (val1 val2) #t)
+    (else #f)))
+
+(define (list-val-length list-val)
+  (cases expval list-val
+    (emptylist-val () 0)
+    (pair-val (val1 val2) (+ 1 (list-val-length val2)))
+    (else (eopl:error 'list-val-length "expval not a list"))))
 
 ; expval->num : ExpVal → Int
 (define expval->num
@@ -251,12 +275,35 @@
                                       (cons (car var-val)
                                             (value-of (cdr var-val)
                                                       env)))
-                                    (bindings))))
+                                    bindings)))
                  (value-of body
                            (foldl (lambda (ext env)
                                     (extend-env (car ext) (cdr ext) env))
                                   env
                                   var-vals))))
+      (let*-exp (bindings body)
+                (if (null? bindings)
+                    (value-of body env)
+                    (value-of (let*-exp (cdr bindings) body)
+                              (let ((binding (car bindings)))
+                                (extend-env (car binding)
+                                            (value-of (cdr binding)
+                                                      env))))))
+      (unpack-exp (identifiers lst body)
+                  (let ((lst-val (value-of lst env)))
+                    (if (list-val? lst-val)
+                        (let ((lst-len (list-val-length lst-val)))
+                          (if (eqv? lst-len (length identifiers))
+                              (letrec ((combine (lambda (ids vals)
+                                                  (if (or (null? ids) (list-val-empty? vals))
+                                                      '()
+                                                      (let ((pair (expval->pair vals)))
+                                                        (cons (cons (car ids) (car pair))
+                                                            (combine (cdr ids) (cdr pair))))))))
+                                (value-of (let-exp (combine identifiers lst-val) body)
+                                          env))
+                              (eopl:error 'unpack-exp "identifiers number is not matched.")))
+                        (eopl:error 'unpack-exp "expssion is not a list."))))
       (minus-exp (exp1)
                  (let ((val1 (value-of exp1 env)))
                    (let ((num1 (expval->num val1)))
