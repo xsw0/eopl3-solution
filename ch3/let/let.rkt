@@ -10,6 +10,24 @@
 (define (foldr proc init lst)
   (foldl proc init (reverse lst)))
 
+(define (andmap proc lst)
+  (if (null? lst)
+      #t
+      (let ((val (proc (car lst))))
+        (if val (andmap proc (cdr lst)) val))))
+
+(define (ormap proc lst)
+  (if (null? lst)
+      #f
+      (let ((val (proc (car lst))))
+        (if val val (ormap proc (cdr lst))))))
+
+(define pair-of
+  (lambda (car-pred? cdr-pred?)
+    (lambda (p)
+      (and (car-pred? (car p))
+           (cdr-pred? (cdr p))))))
+
 (define list-of
   (lambda (pred)
     (lambda (val)
@@ -101,7 +119,9 @@
    (exp1 expression?))
   (emptylist-exp)
   (list-exp
-   (exps (list-of expression?))))
+   (exps (list-of expression?)))
+  (cond-exp
+   (clauses (list-of (pair-of expression? expression?)))))
 
 ; init-env : () → Env
 ; usage: (init-env) = [i=⌈1⌉,v=⌈5⌉,x=⌈10⌉]
@@ -240,14 +260,14 @@
                       (val2 (value-of exp2 env)))
                   (pair-val val1 val2)))
       (car-exp (exp1)
-                (let ((val1 (value-of exp1 env)))
-                  (car (expval->pair exp1))))
+               (let ((val1 (value-of exp1 env)))
+                 (car (expval->pair val1))))
       (cdr-exp (exp1)
-                (let ((val1 (value-of exp1 env)))
-                  (cdr (expval->pair exp1))))
+               (let ((val1 (value-of exp1 env)))
+                 (cdr (expval->pair val1))))
       (null?-exp (exp1)
                  (let ((val1 (value-of exp1 env)))
-                   (cases expval exp1
+                   (cases expval val1
                      (emptylist-val () (bool-val #t))
                      (else (bool-val #f)))))
       (emptylist-exp ()
@@ -255,4 +275,14 @@
       (list-exp (exps)
                 (foldr (lambda (exp exps)
                          (pair-val (value-of exp) exps))
-                       (emptylist-val) exps)))))
+                       (emptylist-val) exps))
+      (cond-exp (clauses)
+                (let ((exp (ormap (lambda (clause)
+                                    (if (expval->bool (value-of (car clause) env))
+                                        (cdr clause)
+                                        #f))
+                                  clauses)))
+                  (if exp
+                      (value-of exp env)
+                      (eopl:error 'cond "none of the tests succeeds.")))))))
+
