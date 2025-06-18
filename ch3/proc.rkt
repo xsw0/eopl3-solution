@@ -44,25 +44,35 @@
   (lambda (type val)
     (eopl:error 'expval-extractor-error "~s not a ~s" val type)))
 
-; Env = Var → SchemeVal
-; empty-env : () → Env
-(define empty-env
-  (lambda ()
-    (lambda (search-var)
-      (report-no-binding-found search-var))))
+(define-datatype environment environment?
+  (empty-env)
+  (extend-env
+   (var identifier?)
+   (val expval?)
+   (env environment?)))
 
-; extend-env : Var × SchemeVal × Env → Env
-(define extend-env
-  (lambda (saved-var saved-val saved-env)
-    (lambda (search-var)
-      (if (eqv? search-var saved-var)
-          saved-val
-          (apply-env saved-env search-var)))))
-
-; apply-env : Env × Var → SchemeVal
 (define apply-env
   (lambda (env search-var)
-    (env search-var)))
+    (cases environment env
+      (empty-env ()
+                 (report-no-binding-found search-var))
+      (extend-env (saved-var saved-val saved-env)
+                  (if (eqv? saved-var search-var)
+                      saved-val
+                      (apply-env saved-env search-var))))))
+
+(define (empty-env? env)
+  (cases environment env
+    (empty-env () #t)
+    (else #f)))
+
+(define (has-binding? env search-var)
+  (cases environment env
+    (empty-env () #f)
+    (extend-env (saved-var saved-val saved-env)
+                (if (eqv? saved-var search-var)
+                    #t
+                    (apply-env saved-env search-var)))))
 
 (define identifier? symbol?)
 
@@ -96,6 +106,13 @@
   (let-exp
    (bindings (list-of (pair-of identifier? expression?)))
    (body expression?))
+  (let*-exp
+   (bindings (list-of (pair-of identifier? expression?)))
+   (body expression?))
+  (unpack-exp
+   (identifiers (list-of identifier?))
+   (lst expression?)
+   (body expression?))
   (minus-exp
    (exp1 expression?))
   (equal?-exp
@@ -120,7 +137,13 @@
   (list-exp
    (exps (list-of expression?)))
   (cond-exp
-   (clauses (list-of (pair-of expression? expression?)))))
+   (clauses (list-of (pair-of expression? expression?))))
+  (proc-exp
+   (var identifier?)
+   (body expression?))
+  (call-exp
+   (rator expression?)
+   (rand expression?)) )
 
 ; init-env : () → Env
 ; usage: (init-env) = [i=⌈1⌉,v=⌈5⌉,x=⌈10⌉]
@@ -134,6 +157,14 @@
        'x (num-val 10)
        (empty-env))))))
 
+; proc? : SchemeVal → Bool
+; procedure : Var × Exp × Env → Proc
+(define-datatype proc proc?
+  (procedure
+   (var identifier?)
+   (body expression?)
+   (saved-env environment?)))
+
 (define-datatype expval expval?
   (num-val
    (num number?))
@@ -142,7 +173,26 @@
   (pair-val
    (val1 expval?)
    (val2 expval?))
-  (emptylist-val))
+  (emptylist-val)
+  (proc-val
+   (proc proc?)))
+
+(define (list-val-empty? list-val)
+  (cases expval list-val
+    (emptylist-val () #t)
+    (else #f)))
+
+(define (list-val? exp-val)
+  (cases expval exp-val
+    (emptylist-val () #t)
+    (pair-val (val1 val2) #t)
+    (else #f)))
+
+(define (list-val-length list-val)
+  (cases expval list-val
+    (emptylist-val () 0)
+    (pair-val (val1 val2) (+ 1 (list-val-length val2)))
+    (else (eopl:error 'list-val-length "expval not a list"))))
 
 ; expval->num : ExpVal → Int
 (define expval->num
@@ -164,6 +214,19 @@
     (cases expval val
       (pair-val (val1 val2) (cons val1 val2))
       (else (report-expval-extractor-error 'pair val)))))
+
+(define expval->proc
+  (lambda (val)
+    (cases expval val
+      (proc-val (proc) proc)
+      (else (report-expval-extractor-error 'proc val)))))
+
+; apply-procedure : Proc × ExpVal → ExpVal
+(define apply-procedure
+  (lambda (proc1 val)
+    (cases proc proc1
+      (procedure (var body saved-env)
+                 (value-of body (extend-env var val saved-env))))))
 
 ; run : String → ExpVal
 (define run
@@ -251,12 +314,35 @@
                                       (cons (car var-val)
                                             (value-of (cdr var-val)
                                                       env)))
-                                    (bindings))))
+                                    bindings)))
                  (value-of body
                            (foldl (lambda (ext env)
                                     (extend-env (car ext) (cdr ext) env))
                                   env
                                   var-vals))))
+      (let*-exp (bindings body)
+                (if (null? bindings)
+                    (value-of body env)
+                    (value-of (let*-exp (cdr bindings) body)
+                              (let ((binding (car bindings)))
+                                (extend-env (car binding)
+                                            (value-of (cdr binding)
+                                                      env))))))
+      (unpack-exp (identifiers lst body)
+                  (let ((lst-val (value-of lst env)))
+                    (if (list-val? lst-val)
+                        (let ((lst-len (list-val-length lst-val)))
+                          (if (eqv? lst-len (length identifiers))
+                              (letrec ((combine (lambda (ids vals)
+                                                  (if (or (null? ids) (list-val-empty? vals))
+                                                      '()
+                                                      (let ((pair (expval->pair vals)))
+                                                        (cons (cons (car ids) (car pair))
+                                                            (combine (cdr ids) (cdr pair))))))))
+                                (value-of (let-exp (combine identifiers lst-val) body)
+                                          env))
+                              (eopl:error 'unpack-exp "identifiers number is not matched.")))
+                        (eopl:error 'unpack-exp "expssion is not a list."))))
       (minus-exp (exp1)
                  (let ((val1 (value-of exp1 env)))
                    (let ((num1 (expval->num val1)))
@@ -290,5 +376,11 @@
                                   clauses)))
                   (if exp
                       (value-of exp env)
-                      (eopl:error 'cond "none of the tests succeeds.")))))))
+                      (eopl:error 'cond "none of the tests succeeds."))))
+      (proc-exp (var body)
+                (proc-val (procedure var body env)))
+      (call-exp (rator rand)
+                (let ((proc (expval->proc (value-of rator env)))
+                      (arg (value-of rand env)))
+                  (apply-procedure proc arg))))))
 
